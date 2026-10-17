@@ -13,6 +13,7 @@ import { CheckupService } from '../services/checkup.service'
 import { DemoSandboxService } from '../services/demo-sandbox.service'
 import { HomeService, moduleCard, moduleVisible, TIER_BENEFITS } from '../services/home.service'
 import { MirrorService } from '../services/mirror.service'
+import { TierService } from '../services/tier.service'
 import { WorkflowService } from '../services/workflow.service'
 
 const BENEFIT_TABLE = [
@@ -121,6 +122,7 @@ export class AppController {
     private wf: WorkflowService,
     private home: HomeService,
     private mirror: MirrorService,
+    private tierSvc: TierService,
   ) {}
 
   @Get('me')
@@ -141,7 +143,16 @@ export class AppController {
       advisor: advisor ? { id: advisor.id, name: advisor.name, phone: advisor.phone } : null,
       points: await this.wf.balance(c.id), unreadMessages: unread, familyCount: family, familyPending: pending, coupons,
       needProfile: !c.salutation || !c.birthYear, tierKeepUntil: c.tierKeepUntil ? fmt(c.tierKeepUntil, 'YYYY-MM-DD') : null,
+      // XJ-303：我的页成长体系扩字段（旧字段全部保留）
+      ...(await this.tierSvc.meGrowth({ id: c.id, tier: c.tier })),
     }
+  }
+
+  /** 成就徽章墙（XJ-303，docs/07 §3.3）：{ unlocked, total, groups[] } */
+  @Get('achievements')
+  @Aud('app')
+  async achievements(@CurrentUser() u: CustomerUser) {
+    return this.tierSvc.achievements(u.id)
   }
 
   @Patch('me')
@@ -476,6 +487,69 @@ export class AppController {
     return out
   }
 
+  // ───────── 健康接力棒（docs/07 §3.2，XJ-304） ─────────
+
+  /** 我的接力对象：最近一条已绑定家人的另一端（D3：仅限已绑定家人，未绑定返回 null 走空状态） */
+  private async relayPeer(customerId: number) {
+    const l = await this.prisma.familyLink.findFirst({ where: { OR: [{ elderId: customerId }, { familyId: customerId }], status: 'active' }, orderBy: { id: 'desc' } })
+    if (!l) return null
+    const peerId = l.elderId === customerId ? l.familyId : l.elderId
+    if (!peerId) return null
+    const peer = await this.prisma.customer.findUnique({ where: { id: peerId }, select: { id: true, salutation: true } })
+    return peer ? { peer, relation: l.relation, myRole: l.elderId === customerId ? 'elder' : 'family' } : null
+  }
+
+  /** 接力状态：连续天数、双方记录、本周 7 格（周一起）。中断不惩罚，过去未接的格子显示「休」 */
+  @Get('family/relay')
+  @Aud('app')
+  async relay(@CurrentUser() u: CustomerUser) {
+    const ctx = await this.relayPeer(u.id)
+    if (!ctx) return { bound: false } // D3：未绑定家人 → 前端展示引导绑定的空状态，不展示接力内容
+    const { peer, relation, myRole } = ctx
+    const relays = await this.prisma.familyRelay.findMany({ where: { OR: [{ customerId: u.id, peerId: peer.id }, { customerId: peer.id, peerId: u.id }] }, orderBy: { date: 'desc' }, take: 90 })
+    const days = [...new Set(relays.map(r => r.date))]
+    // 连续天数：今天没接从昨天起算（与 /app/checkins 的 streak 口径一致，白天不清零）
+    let streak = 0
+    let d = days.includes(today()) ? dayjs() : dayjs().subtract(1, 'day')
+    while (days.includes(d.format('YYYY-MM-DD'))) { streak++; d = d.subtract(1, 'day') }
+    // 本周 7 格：已接 = passed；今日 = today；过去未接 = rest（休息日，不惩罚）；未来 = future
+    const monday = dayjs().subtract((dayjs().day() + 6) % 7, 'day')
+    const week = Array.from({ length: 7 }, (_, i) => {
+      const cur = monday.add(i, 'day')
+      const date = cur.format('YYYY-MM-DD')
+      return { date, label: cur.format('M/D'), state: days.includes(date) ? 'passed' : date === today() ? 'today' : date < today() ? 'rest' : 'future' }
+    })
+    const myPassedToday = relays.some(r => r.date === today() && r.customerId === u.id)
+    return {
+      bound: true,
+      peer: { id: peer.id, name: peer.salutation || '家人', relation, myRole },
+      streak, totalDays: days.length,
+      todayPassed: days.includes(today()), myPassedToday,
+      week,
+      rule: '接棒后双方各得 5 积分；一天一次，0 点重置；中断不清空成就',
+    }
+  }
+
+  /** 接棒：双方各 +5 积分（写 PointsLedger）。事务内先查后写，同一对家人当天任一方向重复接棒都被拒 */
+  @Post('family/relay/pass')
+  @Aud('app')
+  async relayPass(@CurrentUser() u: CustomerUser) {
+    const ctx = await this.relayPeer(u.id)
+    if (!ctx) throw Err.bad('先绑定家人，再一起接力吧')
+    const { peer } = ctx
+    await this.prisma.$transaction(async (tx) => {
+      const n = await tx.familyRelay.count({ where: { OR: [{ customerId: u.id, peerId: peer.id, date: today() }, { customerId: peer.id, peerId: u.id, date: today() }] } })
+      if (n) throw Err.conflict('今天已经接过棒啦，明天再来')
+      await tx.familyRelay.create({ data: { customerId: u.id, peerId: peer.id, date: today() } })
+    })
+    const me = await this.prisma.customer.findUnique({ where: { id: u.id }, select: { salutation: true } })
+    await this.wf.addPoints(u.id, 5, 'relay', `健康接力：与${peer.salutation || '家人'}互接`)
+    await this.wf.addPoints(peer.id, 5, 'relay', `健康接力：与${me?.salutation || '家人'}互接`)
+    await this.wf.message(peer.id, '接力成功', `${me?.salutation || '家人'}接过了你的健康接力棒，你们各得 5 积分`, '/pkg-family/relay')
+    await this.wf.event(u.id, 'relay_pass', { peerId: peer.id })
+    return { ok: true, points: 5 }
+  }
+
   // ───────── 魔镜 ─────────
 
   @Post('mirror/sessions')
@@ -543,7 +617,10 @@ export class AppController {
     // 今天还没打卡时从昨天往前数，连续天数不会在白天被清零
     let d = days.includes(today()) ? dayjs() : dayjs().subtract(1, 'day')
     while (days.includes(d.format('YYYY-MM-DD'))) { streak++; d = d.subtract(1, 'day') }
-    return { today: list.filter(c => c.date === today()).map(c => c.type), streak, recent: list.slice(0, 20).map(c => ({ type: c.type, date: c.date, data: c.data })) }
+    // XJ-302：签到日历月历网格需要的两个字段（streak 保留，前端旧用法不受影响）
+    const monthRows = await this.prisma.checkin.findMany({ where: { customerId: u.id, date: { startsWith: dayjs().format('YYYY-MM') } }, select: { date: true } })
+    const monthSignedDates = [...new Set(monthRows.map(r => r.date))].sort()
+    return { today: list.filter(c => c.date === today()).map(c => c.type), streak, streakDays: streak, monthSignedDates, recent: list.slice(0, 20).map(c => ({ type: c.type, date: c.date, data: c.data })) }
   }
 
   @Post('checkins')
@@ -783,6 +860,74 @@ export class AppController {
     return { ok: true, refunded }
   }
 
+  // ───────── 门店集章册（docs/07 §3.6，XJ-304；D7：按 N 家门店设计，不做单店硬编码） ─────────
+
+  /** 集章册：门店列表 + 盖章状态。距离不引入地图 SDK，用商圈/商场文案替代 */
+  @Get('stores/stamps')
+  @Aud('app')
+  async storeStamps(@CurrentUser() u: CustomerUser) {
+    const month = dayjs().format('YYYY-MM')
+    const [stores, stamps, orders] = await Promise.all([
+      this.prisma.store.findMany({ where: { status: 'active' }, orderBy: { id: 'asc' } }),
+      this.prisma.storeStamp.findMany({ where: { customerId: u.id }, orderBy: { stampedAt: 'desc' } }),
+      this.prisma.projectOrder.findMany({ where: { customerId: u.id, status: { in: ['paid', 'booked', 'used'] } }, select: { storeId: true } }),
+    ])
+    const visitsOf = (storeId: number) => orders.filter(o => o.storeId === storeId).length
+    const list = stores
+      .map((s) => {
+        const mine = stamps.filter(x => x.storeId === s.id)
+        const thisMonth = mine.find(x => x.month === month)
+        const visits = visitsOf(s.id)
+        return {
+          id: s.id, name: s.name, district: s.district, address: s.address, phone: s.phone, mall: s.mall,
+          visits, frequent: visits >= 2,
+          stampedThisMonth: !!thisMonth, stampedAt: thisMonth ? fmt(thisMonth.stampedAt, 'YYYY-MM-DD') : null,
+          totalStamps: mine.length,
+        }
+      })
+      .sort((a, b) => (b.stampedThisMonth ? 1 : 0) - (a.stampedThisMonth ? 1 : 0) || b.visits - a.visits)
+    return {
+      month, storeCount: stores.length,
+      stampedStores: new Set(stamps.filter(x => x.month === month).map(x => x.storeId)).size,
+      totalStamps: stamps.length,
+      rule: ['到店完成项目或体检后，出示集章册由顾问扫码盖章', '一月内每店限 1 枚'],
+      rewardHint: '集满本月全部门店印章，解锁会员专属礼遇',
+      stores: list,
+    }
+  }
+
+  /** 盖章：一店一月一枚（唯一约束兜底）。顾问扫码记经办人；未传工号时记客户的健康顾问（演示/线下代录） */
+  @Post('stores/stamps/:id')
+  @Aud('app')
+  async stampStore(@CurrentUser() u: CustomerUser, @Param('id', ParseIntPipe) id: number, @Body() body: { staffNo?: string }) {
+    const store = await this.prisma.store.findUnique({ where: { id } })
+    if (!store || store.status !== 'active') throw Err.notFound('门店不存在')
+    let operatorStaffId: number | null = null
+    if (body.staffNo) {
+      const staff = await this.prisma.staff.findUnique({ where: { staffNo: body.staffNo } })
+      if (!staff) throw Err.bad('顾问工号不存在')
+      operatorStaffId = staff.id
+    }
+    else {
+      const me = await this.prisma.customer.findUnique({ where: { id: u.id }, select: { advisorId: true } })
+      operatorStaffId = me?.advisorId ?? null
+    }
+    const month = dayjs().format('YYYY-MM')
+    try {
+      await this.prisma.storeStamp.create({ data: { customerId: u.id, storeId: id, month, operatorStaffId } })
+    }
+    catch (e: any) {
+      if (e?.code === 'P2002') throw Err.conflict('本月这家店已经盖过章啦，下月再来')
+      throw e
+    }
+    await this.wf.event(u.id, 'store_stamp', { storeId: id, storeName: store.name })
+    const [stamps, storeCount] = await Promise.all([
+      this.prisma.storeStamp.findMany({ where: { customerId: u.id } }),
+      this.prisma.store.count({ where: { status: 'active' } }),
+    ])
+    return { ok: true, month, stampedAt: fmt(new Date(), 'YYYY-MM-DD'), stampedStores: new Set(stamps.filter(x => x.month === month).map(x => x.storeId)).size, storeCount }
+  }
+
   @Get('about')
   async about() {
     const hospitals = await this.prisma.hospital.findMany({ where: { status: 'active' } })
@@ -864,6 +1009,12 @@ export class AppHealthController {
   @Get('archive/overview')
   overview(@CurrentUser() u: CustomerUser) {
     return this.archive.overview(u.id)
+  }
+
+  /** 六维周报（XJ-302）：week 传该周任意一天（YYYY-MM-DD），不传默认本周；上一期传上周边界日期即可 */
+  @Get('archive/weekly')
+  weekly(@CurrentUser() u: CustomerUser, @Query('week') week?: string) {
+    return this.archive.weekly(u.id, week)
   }
 
   @Get('archive/records')

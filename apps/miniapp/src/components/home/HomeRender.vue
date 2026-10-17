@@ -4,7 +4,12 @@
  * 不认识的组件类型直接跳过，保证老版本兼容。
  */
 import { computed, ref } from 'vue'
+import HomeElder from '@/components/home/HomeElder.vue'
+import HomeSignin from '@/components/home/HomeSignin.vue'
+import HomeTasks from '@/components/home/HomeTasks.vue'
+import { applyMatrix, GATE_TYPES } from '@/components/home/HomeGate.vue'
 import XIcon from '@/components/XIcon.vue'
+import XMascot from '@/components/XMascot.vue'
 import XRadar from '@/components/XRadar.vue'
 import { http } from '@/xj/request'
 import { useXj } from '@/xj/store'
@@ -13,8 +18,23 @@ import { absUrl, go, themeHex, toast } from '@/xj/utils'
 const props = defineProps<{ components: any[], night?: boolean }>()
 const xj = useXj()
 const elder = computed(() => xj.elderMode)
-const KNOWN = ['greeting', 'tierCard', 'healthCard', 'elderToday', 'entryGrid', 'banner', 'moduleList', 'activityCard', 'notice', 'mirrorFab', 'divider']
-const list = computed(() => (props.components || []).filter(c => KNOWN.includes(c.type)))
+// XJ-202：KNOWN 含矩阵全部类型，applyMatrix 按 §4.1 矩阵过滤 + 兜底注入
+const KNOWN = Array.from(new Set(['greeting', 'tierCard', 'healthCard', 'elderToday', 'checkinBar', 'taskList', 'entryGrid', 'banner', 'moduleList', 'activityCard', 'notice', 'mirrorFab', 'divider', ...GATE_TYPES]))
+const list = computed(() => {
+  const gated = applyMatrix(props.components || [], { tier: xj.tier, isGuest: !xj.loggedIn, elder: xj.elderMode })
+  // XJ-203 / D21：乐龄下不渲染 mirrorFab 悬浮球（避免遮挡大字内容），由底部语音条替代
+  return gated.filter(c => KNOWN.includes(c.type) && !(xj.elderMode && c.type === 'mirrorFab'))
+})
+
+/** XJ-203：乐龄「2 件小事」取自原始布局 taskList（矩阵按 §4.1 会剔除 taskList，故从过滤前取） */
+const elderTasks = computed(() => {
+  const tl = (props.components || []).find(c => c.type === 'taskList')
+  return (tl?.props?.tasks || []).slice(0, 2)
+})
+const elderDone = computed(() => {
+  const tl = (props.components || []).find(c => c.type === 'taskList')
+  return tl?.props?.doneToday || []
+})
 
 function open(item: any, component: string) {
   if (item?.code) http.post('/app/events', { event: 'home_component_click', props: { component, moduleCode: item.code } }, { silent: true }).catch(() => {})
@@ -115,9 +135,15 @@ const DIMS = [
             <text v-if="c.props.isGuest" class="t-sm c-brand semi" @click="go('/pkg-auth/login')">登录 / 注册</text>
           </view>
         </view>
-        <view v-if="c.props.showElderToggle" class="col gap4" style="align-items: flex-end" @click="xj.toggleElder()">
-          <text class="t-sm c2">乐龄模式</text>
-          <view class="toggle" :class="{ on: elder }"><view class="knob" /></view>
+        <view class="row gap12" style="align-items: center">
+          <view v-if="c.props.showElderToggle" class="col gap4" style="align-items: flex-end" @click="xj.toggleElder()">
+            <text class="t-sm c2">乐龄模式</text>
+            <view class="toggle" :class="{ on: elder }"><view class="knob" /></view>
+          </view>
+          <!-- 小镜入口（D21）：问候栏头像为魔镜第二入口，与 mirrorFab 悬浮球并存 -->
+          <view class="mascot-entry" hover-class="mo-press-active" :hover-stay-time="80" @click="go('/pages/mirror/index')">
+            <XMascot :size="32" state="online" />
+          </view>
         </view>
       </view>
 
@@ -142,6 +168,12 @@ const DIMS = [
           </view>
         </view>
       </view>
+
+      <!-- 连续签到激活条（XJ-201）：数据由 HomeSignin 自取 /app/checkins -->
+      <HomeSignin v-else-if="c.type === 'checkinBar'" :night="night" />
+
+      <!-- 今日 3 件事任务卡（XJ-201 / XJ-305 / D1）：任务由后端动态生成 -->
+      <HomeTasks v-else-if="c.type === 'taskList'" :title="c.props.title" :tasks="c.props.tasks" :done-today="c.props.doneToday" />
 
       <!-- 健康卡 -->
       <view v-else-if="c.type === 'healthCard'" class="card raised health">
@@ -180,56 +212,8 @@ const DIMS = [
         </view>
       </view>
 
-      <!-- 乐龄 · 今日健康（issue #8）：问候 + 健康概览 + 今日养护 + 家人大入口 -->
-      <view v-else-if="c.type === 'elderToday'" class="card elder-today">
-        <view class="row-between gap8">
-          <view class="col gap6 flex1">
-            <text class="t-title">{{ c.props.text }}</text>
-            <view class="row gap8">
-              <text class="tag">{{ c.props.isGuest ? '访客' : c.props.tierName }}</text>
-              <text v-if="c.props.isGuest" class="t-sm c-brand semi" @click="go('/pkg-auth/login')">登录 / 注册</text>
-            </view>
-          </view>
-          <view v-if="c.props.showElderToggle" class="col gap4" style="align-items: flex-end" @click="xj.toggleElder()">
-            <text class="t-sm c2">乐龄模式</text>
-            <view class="toggle" :class="{ on: elder }"><view class="knob" /></view>
-          </view>
-        </view>
-        <template v-if="c.props.health.hasAssessment">
-          <view class="row-between et-index" @click="go('/pages/archive/index')">
-            <view class="col gap4">
-              <text class="t-body c2">六维年轻化指数</text>
-              <view class="row gap8" style="align-items: baseline">
-                <text class="num bold" style="font-size: 60px; line-height: 1.05">{{ c.props.health.index }}</text>
-                <text v-if="c.props.health.delta" class="semi" :class="c.props.health.delta > 0 ? 'c-care' : 'c-warn'">比上次 {{ c.props.health.delta > 0 ? '+' : '' }}{{ c.props.health.delta }}</text>
-              </view>
-              <text class="t-sm c3">上次测评 {{ c.props.health.lastAssessedAt }}</text>
-            </view>
-            <XRadar :scores="c.props.health.dims" :size="104" :dark="night" />
-          </view>
-        </template>
-        <view v-else class="col gap8 et-cta" @click="go(xj.loggedIn ? '/pkg-assess/intro' : '/pkg-auth/login')">
-          <text class="t-lg">了解自己的六个维度</text>
-          <text class="c2">完成测评可以领取免费体检券。</text>
-          <view class="btn">{{ c.props.health.cta || '开始六维测评，约 8 分钟' }}</view>
-        </view>
-        <view v-for="t in c.props.health.todos" :key="t.text" class="todo row gap12" @click="go(t.link)">
-          <view class="ic-chip" :class="t.tone === 'care' ? 'care' : 'brand'"><XIcon :name="t.icon" /></view>
-          <view class="col flex1">
-            <text class="t-md">{{ t.text }}</text>
-            <text v-if="t.sub" class="t-sm c2">{{ t.sub }}</text>
-          </view>
-          <XIcon name="chevron-right" :size="22" color="#786E74" />
-        </view>
-        <view class="et-family row gap12" @click="go('/pkg-family/list')">
-          <view class="icon-box family-ic"><XIcon name="users" :size="26" /></view>
-          <view class="col flex1">
-            <text class="et-family-t">家人</text>
-            <text class="t-sm" style="opacity: 0.92">让子女随时了解您的健康情况，更放心</text>
-          </view>
-          <XIcon name="chevron-right" :size="22" color="rgba(255,255,255,0.9)" />
-        </view>
-      </view>
+      <!-- 乐龄 · 今日健康（XJ-203 / docs/07 §4.3）：问候 + 2 件小事 + 家人前置 + 健康概览，由 HomeElder 承载 -->
+      <HomeElder v-else-if="c.type === 'elderToday'" :c="c" :tasks="elderTasks" :done-today="elderDone" :night="night" />
 
       <!-- 入口宫格 -->
       <view v-else-if="c.type === 'entryGrid'">
@@ -307,7 +291,9 @@ const DIMS = [
                 <text v-else-if="it.priceText" class="t-md c-brand bold">{{ it.priceText }}</text>
                 <view v-else />
                 <!-- 有价格时收成圆形箭头，给「会员价 ¥4,680 起」留足宽度 -->
-                <view v-if="!elder && it.priceText" class="go-round"><XIcon name="chevron-right" :size="16" /></view>
+                <view v-if="!elder && it.priceText" class="go-round">
+                  <XIcon name="chevron-right" :size="16" />
+                </view>
                 <view v-else-if="!elder" class="go-pill">去看看<XIcon name="chevron-right" :size="14" /></view>
               </view>
             </view>
@@ -347,17 +333,119 @@ const DIMS = [
         <XIcon name="info-circle" /><text class="t-sm">{{ c.props.text }}</text>
       </view>
 
-      <!-- 魔镜悬浮入口 -->
-      <view v-else-if="c.type === 'mirrorFab'" class="fab" :class="{ elder, night }" @click="go('/pages/mirror/index')">
-        <XIcon name="sparkles" :size="elder ? 26 : 22" />
-        <text>{{ elder ? (c.props.label || '和小镜聊聊') : (c.props.label || '小镜') }}</text>
+      <!-- B 级：升级进度条（tierProgress，§4.1 矩阵 B 专属） -->
+      <view v-else-if="c.type === 'tierProgress'" class="card row gap12" @click="go('/pkg-me/tier')">
+        <view class="col flex1">
+          <view class="row-between">
+            <text class="t-sm c2">{{ c.props.title || '距下个等级' }}</text>
+            <text class="t-sm c-brand semi">{{ c.props.progress || '' }}</text>
+          </view>
+          <view v-if="c.props.pct != null" class="progress" style="margin-top: 8px">
+            <view :style="{ width: `${c.props.pct}%` }" />
+          </view>
+        </view>
+        <XIcon name="chevron-right" :size="20" color="#786E74" />
+      </view>
+
+      <!-- A 级：专属顾问卡（advisorCard，§4.1 矩阵 A 专属） -->
+      <view v-else-if="c.type === 'advisorCard'" class="card row gap12" @click="go('/pkg-me/advisor')">
+        <view class="ic-chip plum">
+          <XIcon name="headset" />
+        </view>
+        <view class="col flex1">
+          <text class="t-md semi">{{ c.props.name || '专属顾问' }}</text>
+          <text class="t-sm c2">{{ c.props.summary || '4 小时内响应' }}</text>
+        </view>
+        <XIcon name="chevron-right" :size="20" color="#786E74" />
+      </view>
+
+      <!-- A 级：权益网格（benefitGrid，§4.1 矩阵 A 专属 6 项） -->
+      <view v-else-if="c.type === 'benefitGrid'" class="card">
+        <text class="t-lg">
+          {{ c.props.title || '臻享权益' }}
+        </text>
+        <view class="dim-grid">
+          <view v-for="b in (c.props.items || c.props.benefits || [])" :key="b.text" class="dim col gap4">
+            <view class="icon-box sm plum">
+              <XIcon :name="b.icon" :size="18" />
+            </view>
+            <text class="t-xs">{{ b.text }}</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- A 级：年度报告入口（annualReport，§4.1 矩阵 A 专属） -->
+      <view v-else-if="c.type === 'annualReport'" class="card row gap12" @click="go('/pages/archive/index')">
+        <view class="ic-chip ink">
+          <XIcon name="report-medical" />
+        </view>
+        <view class="col flex1">
+          <text class="t-md semi">{{ c.props.title || '年度个人健康报告' }}</text>
+          <text class="t-sm c2">{{ c.props.summary || '全年六维趋势与解读' }}</text>
+        </view>
+        <XIcon name="chevron-right" :size="20" color="#786E74" />
+      </view>
+
+      <!-- B 级：结伴拼团卡（groupCard，§4.1 矩阵 B 专属） -->
+      <view v-else-if="c.type === 'groupCard'" class="card row gap12" @click="go(c.props.link || '/pkg-module/detail')">
+        <view class="ic-chip terra">
+          <XIcon name="users-group" />
+        </view>
+        <view class="col flex1">
+          <text class="t-md semi">{{ c.props.name || '结伴拼团' }}</text>
+          <text class="t-sm c2">{{ c.props.summary || '和同龄人一起，更有动力' }}</text>
+        </view>
+        <XIcon name="chevron-right" :size="20" color="#786E74" />
+      </view>
+
+      <!-- 访客专属：测评引导卡（assessGuide，§4.1 矩阵访客专属） -->
+      <view v-else-if="c.type === 'assessGuide'" class="card col gap12" @click="go('/pkg-assess/intro')">
+        <text class="t-lg">{{ c.props.title || '六个维度是什么' }}</text>
+        <text class="c2">{{ c.props.summary || '完成免费测评，领体检券' }}</text>
+        <view class="btn small">
+          {{ c.props.cta || '开始测评' }}
+        </view>
+      </view>
+
+      <!-- 访客专属：门店与品牌（storeBrand，§4.1 矩阵访客专属） -->
+      <view v-else-if="c.type === 'storeBrand'" class="card row gap12" @click="go('/pkg-module/store')">
+        <view class="ic-chip brand">
+          <XIcon name="building-store" />
+        </view>
+        <view class="col flex1">
+          <text class="t-md semi">{{ c.props.name || '门店与品牌' }}</text>
+          <text class="t-sm c2">{{ c.props.summary || '' }}</text>
+        </view>
+        <XIcon name="chevron-right" :size="20" color="#786E74" />
+      </view>
+
+      <!-- 魔镜悬浮入口（乐龄下已被 list 过滤剔除，由底部语音条替代，XJ-203 / D21） -->
+      <view v-else-if="c.type === 'mirrorFab'" class="fab" :class="{ night }" @click="go('/pages/mirror/index')">
+        <XIcon name="sparkles" :size="22" />
+        <text>{{ c.props.label || '小镜' }}</text>
       </view>
     </template>
+
+    <!-- 乐龄语音小镜条（XJ-203 / D21）：替代 mirrorFab 悬浮球，一次点击直达小镜 -->
+    <view v-if="elder" class="voice-bar" hover-class="mo-press-active" :hover-stay-time="80" @click="go('/pages/mirror/index')">
+      <XIcon name="microphone" :size="24" />
+      <text>按住说话，问问小镜</text>
+    </view>
   </view>
 </template>
 
 <style scoped lang="scss">
 .greet { padding-top: 4px; }
+/* 小镜头像入口：按压反馈走 hover-class，热区比 32px 头像大一圈 */
+.mascot-entry {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
 .toggle { width: 50px; height: 30px; border-radius: 15px; background: #d8d0d4; position: relative; transition: background 0.2s; }
 .toggle .knob { position: absolute; left: 3px; top: 3px; width: 24px; height: 24px; border-radius: 12px; background: #fff; box-shadow: 0 1px 2px rgba(60, 24, 44, 0.25); transition: left 0.2s; }
 .toggle.on { background: var(--brand); }
@@ -445,13 +533,26 @@ const DIMS = [
 .night .ph-fallback { color: #d2b47a; background: radial-gradient(circle at 78% 18%, rgba(210, 180, 122, 0.28) 0, rgba(210, 180, 122, 0) 45%), linear-gradient(145deg, #3a3026, #2a231c); box-shadow: inset 0 0 0 1px rgba(210, 180, 122, 0.22); }
 
 .fab { position: fixed; right: 16px; bottom: calc(76px + env(safe-area-inset-bottom)); z-index: 60; height: 48px; padding: 0 16px; border-radius: 24px; background: var(--brand); color: var(--on-brand); display: flex; align-items: center; gap: 6px; font-weight: 700; font-size: 15px; box-shadow: 0 8px 24px -8px rgba(168, 130, 77, 0.5); }
-.fab.elder { height: 58px; padding: 0 20px; font-size: 18px; bottom: calc(88px + env(safe-area-inset-bottom)); }
 .fab.night { color: #1c1712; }
 
-.elder-today { padding: 18px 16px 8px; }
-.et-index { border-top: 1px solid var(--line); margin-top: 14px; padding-top: 14px; }
-.et-cta { margin-top: 14px; }
-.et-family { margin: 14px 0 10px; border-radius: var(--r-inner); background: var(--care); color: #fff; padding: 16px 14px; min-height: 64px; }
-.et-family .icon-box.family-ic { background: rgba(255, 255, 255, 0.2); color: #fff; }
-.et-family-t { font-size: var(--fs-lg); font-weight: 700; line-height: 1.3; }
+/* 乐龄语音小镜条（XJ-203 / D21）：固定在 tabbar 之上（对齐 .xj.has-tabbar 的 96px + 安全区留白），
+   只在乐龄态渲染，--care 继承乐龄皮肤墨绿 #5c7a52；全宽热区 52px ≥44px */
+.voice-bar {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: calc(96px + env(safe-area-inset-bottom));
+  z-index: 60;
+  height: 52px;
+  border-radius: 26px;
+  background: var(--care);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  box-shadow: 0 8px 24px -10px rgba(63, 107, 79, 0.55);
+}
 </style>
