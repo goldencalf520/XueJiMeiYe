@@ -2,6 +2,9 @@ import { Global, Injectable, Module, OnModuleInit } from '@nestjs/common'
 import { PrismaClient } from '@prisma/client'
 import { CUSTOMER_SCOPED, hiddenDemoIds, staffView } from './demo-scope'
 
+// 数据库开关（DB_PROVIDER=sqlite / mysql）与连接串解析，和 prisma/db.js 共用；src 与 dist 下相对路径相同
+const { applyDbEnv, loadDotEnv } = require('../../prisma/db-env')
+
 const LIST_OPS = new Set(['findMany', 'findFirst', 'findFirstOrThrow', 'count', 'groupBy', 'aggregate'])
 /** customerId 可空的表：NOT IN 会把空值也排除，要单独放行 */
 const NULLABLE = new Set(['task', 'auditLog', 'eventLog'])
@@ -9,7 +12,8 @@ const NULLABLE = new Set(['task', 'auditLog', 'eventLog'])
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit {
   constructor() {
-    super()
+    loadDotEnv()
+    super({ datasourceUrl: applyDbEnv().url })
     // 员工端（管理端 / 医院端）的列表与统计查询自动排除隐藏中的演示副本；客户端、定时任务、事务不受影响
     const baseCustomer = this.customer
     const loadHidden = () => baseCustomer.findMany({ where: { demoOf: { not: null }, demoShown: false }, select: { id: true } }).then(l => l.map(c => c.id))

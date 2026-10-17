@@ -4,6 +4,47 @@ let BASE: string = import.meta.env.VITE_SERVER_BASEURL || '/api/v1'
 BASE = import.meta.env.VITE_MP_SERVER_BASEURL || BASE
 // #endif
 
+/**
+ * 微信云托管：配置了环境 ID 与服务名时，小程序走 wx.cloud.callContainer（走微信内网，不用配置合法域名、不用备案域名）；
+ * 未配置时仍按 BASE 发 HTTPS 请求。H5 不受影响。
+ */
+const CLOUD_ENV = import.meta.env.VITE_WX_CLOUD_ENV || ''
+const CLOUD_SERVICE = import.meta.env.VITE_WX_CLOUD_SERVICE || ''
+const CLOUD_PATH = import.meta.env.VITE_WX_CLOUD_PATH || '/api/v1'
+let cloudReady = false
+
+function toQuery(data?: Record<string, any>) {
+  const parts = Object.entries(data || {}).filter(([, v]) => v !== undefined && v !== null).map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(typeof v === 'object' ? JSON.stringify(v) : String(v))}`)
+  return parts.length ? `?${parts.join('&')}` : ''
+}
+
+interface RawOpts { method: string, url: string, data?: any, header: Record<string, string>, success: (res: { data: any, statusCode: number }) => void, fail: () => void }
+
+function send(o: RawOpts) {
+  // #ifdef MP-WEIXIN
+  if (CLOUD_ENV && CLOUD_SERVICE) {
+    const wxApi = wx as any
+    if (!cloudReady) {
+      wxApi.cloud.init({ env: CLOUD_ENV })
+      cloudReady = true
+    }
+    const isGet = o.method === 'GET' || o.method === 'DELETE'
+    wxApi.cloud.callContainer({
+      config: { env: CLOUD_ENV },
+      path: CLOUD_PATH + o.url + (isGet ? toQuery(o.data) : ''),
+      method: o.method,
+      data: isGet ? undefined : o.data,
+      header: { ...o.header, 'X-WX-SERVICE': CLOUD_SERVICE },
+      timeout: 30000,
+      success: o.success,
+      fail: o.fail,
+    })
+    return
+  }
+  // #endif
+  uni.request({ url: BASE + o.url, method: o.method as any, data: o.data, timeout: 30000, header: o.header, success: o.success as any, fail: o.fail })
+}
+
 export const TOKEN_KEY = 'xj_token'
 
 export function getToken(): string {
@@ -24,11 +65,10 @@ export function request<T = any>(method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DEL
   const token = getToken()
   if (opts.loading) uni.showLoading({ title: opts.loading, mask: true })
   return new Promise((resolve, reject) => {
-    uni.request({
-      url: BASE + url,
-      method: method as any,
+    send({
+      url,
+      method,
       data,
-      timeout: 30000,
       header: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       success: (res) => {
         const body: any = res.data

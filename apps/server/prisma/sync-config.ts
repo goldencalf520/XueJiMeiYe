@@ -1,7 +1,7 @@
 /**
  * 增量同步配置数据（不删除客户、测评、方案等业务数据）
  * 用于已上线的演示环境：门店资料、项目、规则、方案包、生活建议、题库选项、模块、首页布局、设备台账
- * 运行：npx ts-node --transpile-only prisma/sync-config.ts
+ * 运行：pnpm db:sync-config（或 node prisma/db.js sync-config）
  * 注意：会覆盖管理端对上述配置的手工修改
  */
 import { PrismaClient } from '@prisma/client'
@@ -10,7 +10,10 @@ import { QUESTIONS } from '../src/engine/question-bank'
 import { CONTRAINDICATIONS, LIFESTYLE_TIPS, PACKAGES, PROJECTS, RED_FLAGS, RISK_SIGNALS } from '../src/engine/rules-data'
 import { LAYOUTS, MODULES } from './seed-config'
 
-const prisma = new PrismaClient()
+const { applyDbEnv, loadDotEnv } = require('./db-env')
+
+loadDotEnv()
+const prisma = new PrismaClient({ datasourceUrl: applyDbEnv().url })
 const log = (...a: any[]) => console.log('[sync]', ...a)
 const same = (a: any, b: any) => JSON.stringify(a) === JSON.stringify(b)
 

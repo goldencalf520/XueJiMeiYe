@@ -5,6 +5,8 @@ import jwt from 'jsonwebtoken'
 import { BizError, Err } from './response'
 
 const SECRET = process.env.JWT_SECRET || 'xueji-hackathon-demo'
+if (!process.env.JWT_SECRET && process.env.NODE_ENV === 'production')
+  console.warn('[xueji] 未设置 JWT_SECRET，正在使用演示默认密钥，令牌可被伪造；请在部署环境变量中配置随机密钥')
 
 export interface CustomerUser { aud: 'app', id: number }
 export interface StaffUser { aud: 'admin', id: number, role: string, name: string, storeId?: number | null, dataScope: string }

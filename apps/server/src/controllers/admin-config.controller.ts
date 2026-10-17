@@ -1,14 +1,12 @@
 import { Body, Controller, Get, Param, ParseIntPipe, Post, Put, Query, UploadedFile, UseInterceptors } from '@nestjs/common'
 import { FileInterceptor } from '@nestjs/platform-express'
-import { existsSync, mkdirSync } from 'node:fs'
-import { extname, join } from 'node:path'
-import { diskStorage } from 'multer'
+import { extname } from 'node:path'
+import { memoryStorage } from 'multer'
 import dayjs from 'dayjs'
 import { Aud, CurrentUser, requireRole, ROLE_NAMES, type StaffUser } from '../common/auth'
 import { PrismaService } from '../common/prisma.service'
 import { Err } from '../common/response'
 import { fmt, TIER_NAMES } from '../common/util'
-import { UPLOAD_DIR } from '../common/upload-dir'
 import { evaluateRedFlags, evaluateRiskSignals, buildFacts, riskLevelOf } from '../engine'
 import { LEVELS } from '../engine/question-bank'
 import { findBannedWords, PROJECT_ATTRS, TAG_NAMES } from '../engine/rules-data'
@@ -132,16 +130,13 @@ export class AdminConfigController {
 
   // ───────── 首页配置 ─────────
 
-  /** 模块封面上传（issue #6/#16）：存 UPLOAD_DIR（部署环境指到持久卷），5MB 限 jpg/png/webp（扩展名白名单，拒绝 svg 防 XSS），写审计日志 */
+  /**
+   * 模块封面上传（issue #6/#16）：文件存数据库（UploadFile），不落容器本地磁盘——云托管多实例、重新部署都不丢；
+   * 5MB 限 jpg/png/webp（扩展名白名单，拒绝 svg 防 XSS），写审计日志。访问路径仍是 /uploads/<name>（main.ts）
+   */
   @Post('upload')
   @UseInterceptors(FileInterceptor('file', {
-    storage: diskStorage({
-      destination: (_req, _file, cb) => {
-        if (!existsSync(UPLOAD_DIR)) mkdirSync(UPLOAD_DIR, { recursive: true })
-        cb(null, UPLOAD_DIR)
-      },
-      filename: (_req, file, cb) => cb(null, `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${extname(file.originalname).toLowerCase()}`),
-    }),
+    storage: memoryStorage(),
     limits: { fileSize: 5 * 1024 * 1024 },
     fileFilter: (_req, file, cb) => {
       // 双重校验（issue #16）：mimetype 仅作初筛，扩展名白名单兜底——否则可上传 image/svg+xml 或伪装成图片的 html
@@ -153,8 +148,12 @@ export class AdminConfigController {
   async upload(@CurrentUser() u: StaffUser, @UploadedFile() file: Express.Multer.File) {
     requireRole(u, ['ops'])
     if (!file) throw Err.bad('缺少文件')
-    await this.wf.audit({ type: 'staff', id: u.id, name: u.name }, 'file.upload', undefined, { file: file.filename, size: file.size })
-    return { url: `/uploads/${file.filename}`, size: file.size }
+    const ext = extname(file.originalname).toLowerCase()
+    const name = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`
+    const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg'
+    await this.prisma.uploadFile.create({ data: { name, mime, size: file.size, data: file.buffer, createdBy: u.name } })
+    await this.wf.audit({ type: 'staff', id: u.id, name: u.name }, 'file.upload', undefined, { file: name, size: file.size })
+    return { url: `/uploads/${name}`, size: file.size }
   }
 
   @Get('home-layouts')

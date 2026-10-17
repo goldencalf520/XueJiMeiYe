@@ -135,6 +135,8 @@ export default defineManifestConfig({
     mergeVirtualHostAttributes: true,
     // styleIsolation: 'shared',
     usingComponents: true,
+    // 组件按需注入：只加载页面实际用到的组件代码，减少启动耗时（代码质量检查项）
+    lazyCodeLoading: 'requiredComponents',
     // __usePrivacyCheck__: true,
   },
   'mp-alipay': {

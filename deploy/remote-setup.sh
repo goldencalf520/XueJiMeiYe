@@ -50,7 +50,7 @@ done
 if [ "${SYNC_CONFIG:-0}" = "1" ] && [ "${RESEED:-0}" != "1" ]; then
   echo "==> 同步配置数据（保留客户与业务数据），先备份数据库"
   cp data/xueji.db "data/xueji.db.bak-$(date +%Y%m%d%H%M%S)"
-  docker compose exec -T xueji npx ts-node --transpile-only prisma/sync-config.ts
+  docker compose exec -T xueji node prisma/db.js sync-config
   docker compose restart xueji
   for i in $(seq 1 60); do
     curl -fsS "http://127.0.0.1:$PORT/api/v1/app/about" >/dev/null 2>&1 && break

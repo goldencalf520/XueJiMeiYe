@@ -7,10 +7,12 @@
     "dev": "nest start --watch",
     "build": "nest build",
     "start": "node dist/main.js",
-    "prisma:generate": "prisma generate",
-    "db:push": "prisma db push --skip-generate",
-    "db:seed": "ts-node --transpile-only prisma/seed.ts",
-    "db:reset": "node -e \"require('fs').rmSync('prisma/xueji.db',{force:true})\" && prisma db push --skip-generate && ts-node --transpile-only prisma/seed.ts"
+    "prisma:generate": "node prisma/db.js generate",
+    "db:push": "node prisma/db.js push",
+    "db:seed": "node prisma/db.js seed",
+    "db:init": "node prisma/db.js init",
+    "db:reset": "node prisma/db.js reset",
+    "db:sync-config": "node prisma/db.js sync-config"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.6",

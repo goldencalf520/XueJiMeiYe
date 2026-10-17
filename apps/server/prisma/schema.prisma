@@ -1,5 +1,6 @@
 // 雪姬美业六维健康平台 · 数据模型（MVP）
-// 对应设计文档第 11 章。黑客松阶段使用 SQLite，切换 MySQL 只需修改 datasource provider。
+// 对应设计文档第 11 章。本文件是唯一的数据模型源：本地开发用 SQLite；微信云托管用 MySQL（DB_PROVIDER=mysql），
+// MySQL 版由 prisma/db.js 自动生成 schema.mysql.prisma。长文本字段请加 `// mysql: @db.Text` 标记（MySQL 的 String 默认 VARCHAR(191)）。
 // 简化项：加密字段（*_enc）在 MVP 中以明文存储；RBAC 用 staff.role 单字段表达。
 
 generator client {
@@ -18,7 +19,7 @@ model Store {
   code      String   @unique
   name      String
   district  String?
-  address   String?
+  address   String? // mysql: @db.Text
   phone     String?
   openHours String?
   bedCount  Int      @default(8)
@@ -54,7 +55,7 @@ model Hospital {
   level           String?
   licenseNo       String?
   hasCheckupScope Boolean  @default(true)
-  address         String?
+  address         String? // mysql: @db.Text
   contact         Json?
   agreement       Json?
   status          String   @default("active")
@@ -175,7 +176,7 @@ model ConsentText {
   version   String
   title     String
   summary   Json
-  content   String
+  content   String // mysql: @db.Text
   required  Boolean  @default(false)
   status    String   @default("published")
   createdAt DateTime @default(now())
@@ -239,7 +240,7 @@ model TierHistory {
   fromTier   String?
   toTier     String
   reason     String
-  note       String?
+  note       String? // mysql: @db.Text
   operator   String?
   createdAt  DateTime @default(now())
 }
@@ -253,9 +254,9 @@ model Module {
   category           String
   entryType          String
   entryConfig        Json?
-  icon               String?
-  cover              String?
-  summary            String?
+  icon               String? // mysql: @db.Text
+  cover              String? // mysql: @db.Text
+  summary            String? // mysql: @db.Text
   detail             Json?
   visibleTiers       Json
   visibleStoreIds    Json?
@@ -304,9 +305,9 @@ model AssessmentQuestion {
   level      String
   seq        Int
   type       String // single / multi / slider / number / image_choice / timer / counter
-  title      String
-  voiceText  String?
-  intro      String?
+  title      String // mysql: @db.Text
+  voiceText  String? // mysql: @db.Text
+  intro      String? // mysql: @db.Text
   options    Json?
   config     Json?
   showIf     Json?
@@ -359,12 +360,12 @@ model Project {
   durationMin Int?
   priceRef    Float? // 门市价
   groupPrice  Float? // 美团团购价（公开价格，对所有客户一致）
-  priceNote   String?
+  priceNote   String? // mysql: @db.Text
   audience    String? // 男女通用 / 仅限女性
   salesNote   String? // 年售 200+
   onMeituan   Boolean @default(false)
-  elderNote   String?
-  complianceNote String?
+  elderNote   String? // mysql: @db.Text
+  complianceNote String? // mysql: @db.Text
   status      String  @default("active") // active / planned / blocked
 }
 
@@ -372,15 +373,15 @@ model PlanPackage {
   id                    Int     @id @default(autoincrement())
   code                  String  @unique
   name                  String
-  target                String?
+  target                String? // mysql: @db.Text
   trigger               Json?
-  triggerText           String?
+  triggerText           String? // mysql: @db.Text
   priority              Int
   items                 Json
   medicalLinks          Json?
   weeks                 Int?
-  templateCustomer      String?
-  templateCustomerElder String?
+  templateCustomer      String? // mysql: @db.Text
+  templateCustomerElder String? // mysql: @db.Text
   status                String  @default("active")
 }
 
@@ -390,11 +391,11 @@ model Rule {
   kind         String // red_flag / risk_signal / contraindication
   level        String?
   source       String?
-  conditionText String?
+  conditionText String? // mysql: @db.Text
   condition    Json?
   action       Json?
-  customerText String?
-  staffAction  String?
+  customerText String? // mysql: @db.Text
+  staffAction  String? // mysql: @db.Text
   version      Int      @default(1)
   doctorConfirmed Boolean @default(false)
   status       String   @default("active")
@@ -404,15 +405,15 @@ model Rule {
 model LifestyleTip {
   id        Int    @id @default(autoincrement())
   code      String @unique
-  text      String
-  textElder String?
+  text      String // mysql: @db.Text
+  textElder String? // mysql: @db.Text
   tags      Json?
 }
 
 model Script {
   id     Int    @id @default(autoincrement())
   scene  String
-  text   String
+  text   String // mysql: @db.Text
   avoid  Json?
   status String @default("active")
 }
@@ -427,10 +428,10 @@ model Device {
   manufacturer    String?
   isMedicalDevice Boolean   @default(false)
   registrationNo  String?
-  approvedUse     String?
-  principle       String?
+  approvedUse     String? // mysql: @db.Text
+  principle       String? // mysql: @db.Text
   admissionStatus String    @default("pending")
-  reviewNote      String?
+  reviewNote      String? // mysql: @db.Text
   reviewedAt      DateTime?
   createdAt       DateTime  @default(now())
 }
@@ -464,7 +465,7 @@ model Record {
   recordType  String // assessment / measurement / hospital_report / service / plan / checkin
   sourceLabel String // HOSPITAL / STORE / SELF
   title       String
-  summary     String?
+  summary     String? // mysql: @db.Text
   refTable    String?
   refId       Int?
   storeId     Int?
@@ -499,14 +500,14 @@ model Plan {
   skeleton         Json
   contentCustomer  Json?
   contentAdvisor   Json?
-  contentDoctor    String?
+  contentDoctor    String? // mysql: @db.Text
   engine           String    @default("template")
   model            String?
   validation       Json?
   reviewStatus     String    @default("pending")
   reviewer         String?
   reviewedAt       DateTime?
-  reviewNote       String?
+  reviewNote       String? // mysql: @db.Text
   status           String    @default("draft") // draft / ready / sent / paused / void
   sentBy           String?
   sentAt           DateTime?
@@ -521,8 +522,8 @@ model MedicalService {
   code        String  @unique
   name        String
   dept        String?
-  description String?
-  notice      String?
+  description String? // mysql: @db.Text
+  notice      String? // mysql: @db.Text
   priceType   String  @default("self_pay")
 }
 
@@ -535,7 +536,7 @@ model CheckupPackage {
   elderOnly       Boolean @default(false)
   agreementPrice  Float?
   fastingRequired Boolean @default(true)
-  notice          String?
+  notice          String? // mysql: @db.Text
   status          String  @default("active")
 }
 
@@ -566,7 +567,7 @@ model Coupon {
   expiresAt          DateTime?
   usedAt             DateTime?
   claimedBy          String?
-  voidReason         String?
+  voidReason         String? // mysql: @db.Text
 }
 
 model Referral {
@@ -579,20 +580,20 @@ model Referral {
   couponId          Int?
   level             String?
   priority          Boolean   @default(false)
-  reasonSummary     String?
+  reasonSummary     String? // mysql: @db.Text
   snapshot          Json
   consentC3Id       Int?
   consentC4Id       Int?
   c4Granted         Boolean   @default(false)
   status            String    @default("sent")
   appointmentAt     DateTime?
-  appointmentNotice String?
+  appointmentNotice String? // mysql: @db.Text
   arrivedAt         DateTime?
   transportNeeded   Boolean   @default(false)
-  storeNote         String?
+  storeNote         String? // mysql: @db.Text
   slaDueAt          DateTime?
-  cancelReason      String?
-  rejectReason      String?
+  cancelReason      String? // mysql: @db.Text
+  rejectReason      String? // mysql: @db.Text
   timeline          Json?
   createdBy         String?
   createdAt         DateTime  @default(now())
@@ -602,12 +603,12 @@ model ReferralReturn {
   id                Int       @id @default(autoincrement())
   referralId        Int       @unique
   doctorName        String
-  conclusion        String
-  advice            String
+  conclusion        String // mysql: @db.Text
+  advice            String // mysql: @db.Text
   storeRestrictions Json?
   recheckDate       String?
   metrics           Json?
-  plainText         String?
+  plainText         String? // mysql: @db.Text
   createdBy         String?
   createdAt         DateTime  @default(now())
 }
@@ -619,7 +620,7 @@ model Statement {
   items      Json
   total      Float
   status     String   @default("pending") // pending / confirmed / disputed
-  note       String?
+  note       String? // mysql: @db.Text
   createdAt  DateTime @default(now())
 }
 
@@ -638,7 +639,7 @@ model Lead {
   partnerId     Int?
   handedOverAt  DateTime?
   wonAmount     Float?
-  lostReason    String?
+  lostReason    String? // mysql: @db.Text
   slaDueAt      DateTime?
   createdAt     DateTime  @default(now())
 }
@@ -648,7 +649,7 @@ model LeadFollowup {
   leadId    Int
   staffName String?
   method    String
-  content   String
+  content   String // mysql: @db.Text
   createdAt DateTime @default(now())
 }
 
@@ -668,7 +669,7 @@ model ProjectOrder {
   payMethod   String? // MVP 模拟支付：mock
   paidAt      DateTime?
   bookDate    String? // 预约到店日期 YYYY-MM-DD
-  bookNote    String?
+  bookNote    String? // mysql: @db.Text
   bookAt      DateTime?
   usedAt      DateTime?
   refunded    Boolean   @default(false) // 已支付后取消 = 已退款
@@ -683,7 +684,7 @@ model PointsLedger {
   customerId   Int
   change       Int
   reasonCode   String
-  note         String?
+  note         String? // mysql: @db.Text
   balanceAfter Int
   createdAt    DateTime @default(now())
 }
@@ -753,10 +754,10 @@ model StoreStamp {
 
 model QuizQuestion {
   id        Int    @id @default(autoincrement())
-  title     String
+  title     String // mysql: @db.Text
   options   Json
   answer    Int
-  knowledge String
+  knowledge String // mysql: @db.Text
   status    String @default("active")
 }
 
@@ -806,12 +807,12 @@ model RiskAlert {
   level           String // L3 / L2 / high / watch
   ruleCodes       Json?
   title           String
-  excerpt         String?
+  excerpt         String? // mysql: @db.Text
   status          String    @default("open") // open / contacting / closed
   slaDueAt        DateTime
   escalationLevel Int       @default(0)
   contactLogs     Json?
-  conclusion      String?
+  conclusion      String? // mysql: @db.Text
   closedBy        String?
   closedAt        DateTime?
   createdAt       DateTime  @default(now())
@@ -845,8 +846,8 @@ model ServiceCheck {
 model MirrorPersona {
   id              Int    @id @default(autoincrement())
   name            String
-  tone            String
-  opening         String
+  tone            String // mysql: @db.Text
+  opening         String // mysql: @db.Text
   quickTopics     Json
   forbiddenTopics Json
   dailyLimit      Int    @default(100)
@@ -867,7 +868,7 @@ model MirrorMessage {
   sessionId    Int
   customerId   Int
   role         String
-  content      String
+  content      String // mysql: @db.Text
   inputMethod  String   @default("text")
   riskCategory String?
   createdAt    DateTime @default(now())
@@ -877,7 +878,7 @@ model MirrorMemory {
   id         Int      @id @default(autoincrement())
   customerId Int
   category   String
-  text       String
+  text       String // mysql: @db.Text
   status     String   @default("active")
   createdAt  DateTime @default(now())
 }
@@ -888,8 +889,8 @@ model Message {
   id         Int      @id @default(autoincrement())
   customerId Int
   title      String
-  content    String
-  link       String?
+  content    String // mysql: @db.Text
+  link       String? // mysql: @db.Text
   read       Boolean  @default(false)
   createdAt  DateTime @default(now())
 }
@@ -900,8 +901,8 @@ model StaffNotice {
   role      String?
   level     String   @default("normal")
   title     String
-  content   String
-  link      String?
+  content   String // mysql: @db.Text
+  link      String? // mysql: @db.Text
   read      Boolean  @default(false)
   createdAt DateTime @default(now())
 }
@@ -935,7 +936,7 @@ model AiCallLog {
   latencyMs    Int?
   inputTokens  Int?
   outputTokens Int?
-  error        String?
+  error        String? // mysql: @db.Text
   createdAt    DateTime @default(now())
 }
 
@@ -961,6 +962,17 @@ model Followup {
   customerId Int
   staffName  String?
   method     String // phone / visit / wecom
-  content    String
+  content    String // mysql: @db.Text
   createdAt  DateTime @default(now())
+}
+
+// 上传文件(本地部署适配,云端对象存储前的 MVP 方案)
+model UploadFile {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  mime      String
+  size      Int
+  data      Bytes
+  createdBy String?
+  createdAt DateTime @default(now())
 }

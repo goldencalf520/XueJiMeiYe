@@ -1,12 +1,12 @@
 #!/bin/sh
-# 首次启动初始化演示数据；之后每次启动只同步表结构，数据保存在 /data 卷中
+# 每次启动同步表结构；库为空（首次启动或 RESEED 后）时写入演示数据。
+# SQLite 数据保存在 /data 卷中；MySQL（DB_PROVIDER=mysql）连接见 prisma/db-env.js
 set -e
 cd /app/server
-if [ ! -f /data/xueji.db ]; then
-  echo "[xueji] 初始化数据库与演示数据"
-  npx prisma db push --skip-generate
-  npx ts-node --transpile-only prisma/seed.ts
+# 建表 + 空库灌种子数据。表结构稳定后可在控制台设 SKIP_DB_PUSH=1，省掉每次冷启动的建表耗时
+if [ "${SKIP_DB_PUSH:-0}" = "1" ]; then
+  echo "[xueji] SKIP_DB_PUSH=1，跳过建表"
 else
-  npx prisma db push --skip-generate
+  node prisma/db.js init
 fi
 exec node dist/main.js

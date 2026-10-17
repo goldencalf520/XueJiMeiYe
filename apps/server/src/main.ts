@@ -5,6 +5,7 @@ import { NestFactory } from '@nestjs/core'
 import type { NestExpressApplication } from '@nestjs/platform-express'
 import express from 'express'
 import { AppModule } from './app.module'
+import { PrismaService } from './common/prisma.service'
 import { staffView } from './common/demo-scope'
 import { AllExceptionsFilter, ResponseInterceptor } from './common/response'
 import { UPLOAD_DIR } from './common/upload-dir'
@@ -22,9 +23,21 @@ async function bootstrap() {
   const root = process.env.WEB_ROOT || join(__dirname, '..', '..')
   const h5 = join(root, 'miniapp', 'dist', 'build', 'h5')
   const admin = join(root, 'admin', 'dist')
-  const uploads = UPLOAD_DIR // issue #16：与上传接口共用同一目录，Docker 里设为持久卷（UPLOAD_DIR）
   const server = app.getHttpAdapter().getInstance()
-  server.use('/uploads', express.static(uploads))
+  // 上传文件存数据库（UploadFile）；早期存在磁盘 UPLOAD_DIR 的旧文件继续可访问
+  const prisma = app.get(PrismaService)
+  server.get('/uploads/:name', async (req, res, next) => {
+    try {
+      const f = await prisma.uploadFile.findUnique({ where: { name: req.params.name } })
+      if (!f) return next()
+      res.set({ 'Content-Type': f.mime, 'Content-Length': String(f.size), 'Cache-Control': 'public, max-age=31536000, immutable', 'X-Content-Type-Options': 'nosniff' })
+      res.end(Buffer.from(f.data))
+    }
+    catch (e) {
+      next(e)
+    }
+  })
+  server.use('/uploads', express.static(UPLOAD_DIR))
   if (existsSync(h5)) {
     server.use('/h5', express.static(h5))
     server.get(/^\/h5(\/.*)?$/, (_req, res) => res.sendFile(join(h5, 'index.html')))

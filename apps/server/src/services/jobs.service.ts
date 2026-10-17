@@ -7,6 +7,7 @@ import { WorkflowService } from './workflow.service'
  * - alert.escalate 每 5 分钟：L3 超时 30 分钟通知店长和健康顾问，再超 30 分钟通知超管
  * - coupon.expire：过期处理
  * - groupbuy：到期未成团自动关闭
+ * 多实例部署（微信云托管）时每个实例都会执行：过期处理是幂等的批量更新，预警升级用条件更新抢占，不会重复通知
  */
 @Injectable()
 export class JobsService implements OnModuleInit, OnModuleDestroy {
@@ -27,12 +28,14 @@ export class JobsService implements OnModuleInit, OnModuleDestroy {
     for (const a of alerts) {
       const over = (now - a.slaDueAt.getTime()) / 60000
       const c = await this.prisma.customer.findUnique({ where: { id: a.customerId } })
+      // 条件更新抢占：云托管多实例同时执行时，只有更新成功的实例发通知，避免重复升级提醒
+      const claim = (level: number) => this.prisma.riskAlert.updateMany({ where: { id: a.id, escalationLevel: { lt: level } }, data: { escalationLevel: level } }).then(r => r.count === 1)
       if (over > 30 && a.escalationLevel < 1) {
-        await this.prisma.riskAlert.update({ where: { id: a.id }, data: { escalationLevel: 1 } })
+        if (!await claim(1)) continue
         await this.wf.notifyStaff({ roles: ['store_manager', 'health_advisor'], storeId: c?.storeId }, '预警超时升级', `【升级】${c?.salutation}的紧急预警已超时 30 分钟未处理`, 'high', '/health/alerts')
       }
       else if (over > 60 && a.escalationLevel < 2) {
-        await this.prisma.riskAlert.update({ where: { id: a.id }, data: { escalationLevel: 2 } })
+        if (!await claim(2)) continue
         await this.wf.notifyStaff({ roles: ['super_admin'] }, '预警超时升级', `【升级】${c?.salutation}的紧急预警已超时 1 小时未处理`, 'high', '/health/alerts')
       }
     }
